@@ -3,6 +3,72 @@ const url = require("url");
 
 const CRLF = "\r\n";
 
+const HttpMethod = {
+  GET: 1,
+  HEAD: 2,
+  POST: 3,
+  PUT: 4,
+  DELETE: 5,
+  CONNECT: 6,
+  OPTIONS: 7,
+  TRACE: 8,
+  PATCH: 9,
+};
+
+const StatusText = {
+  200: "OK",
+  404: "Not Found",
+};
+
+const parseRequest = (data) => {
+  const [requestLine, ...lines] = data.toString().split("\r\n");
+
+  const headersEnd = lines.findIndex((line) => line.length === 0);
+  const [headers, body] = [
+    lines
+      .slice(0, headersEnd)
+      .map((header) => header.split(": "))
+      .reduce((prev, curr) => ({ ...prev, [curr[0]]: curr[1] }), {}),
+    lines.slice(headersEnd + 1),
+  ];
+
+  const [method, target, httpVersion] = requestLine.split(" ");
+
+  if (HttpMethod[method] === undefined) {
+    throw "Unnown method";
+  }
+
+  return {
+    url: new url.URL(target, "http://localhost:4221"),
+    method,
+    httpVersion,
+    headers,
+    body,
+  };
+};
+
+const handlePath = (path, pathToTest, callback) => {
+  const urlMatcher = `^(${path}){1}((\/){1}(\\S)+)*$`;
+  const regexp = new RegExp(urlMatcher);
+
+  const foundMatch = regexp.test(pathToTest);
+
+  if (foundMatch) {
+    callback(pathToTest);
+  }
+
+  return foundMatch;
+};
+
+const getResponse = (status, headers, responseBody) => {
+  return [
+    `HTTP/1.1 ${status} ${StatusText[status]}`,
+    ...Object.keys(headers).map((key) => `${key}: ${headers[key]}`),
+    ``,
+    `${responseBody}`,
+  ].join(CRLF);
+};
+
 // Uncomment this to pass the first stage
 const server = net.createServer((socket) => {
   socket.on("close", () => {
@@ -12,44 +78,56 @@ const server = net.createServer((socket) => {
   });
 
   socket.on("data", (data) => {
-    const lines = data.toString().split("\r\n");
+    const request = parseRequest(data);
+    let anyPathHandled = false;
 
-    lines.forEach((line) => {
-      if (line.startsWith("GET")) {
-        const [httpMethod, httpPath, httpVersion] = line.split(" ");
-
-        console.log({
-          httpMethod,
-          httpPath,
-          httpVersion,
+    switch (HttpMethod[request.method]) {
+      case HttpMethod.GET:
+        anyPathHandled = handlePath("/", request.url.pathname, () => {
+          socket.write(`HTTP/1.1 200 OK${CRLF}${CRLF}test`);
+          socket.end();
         });
 
-        if (httpPath?.length) {
-          const parsed = new url.URL(httpPath, 'http://localhost:4221');
-          const pathParts = parsed.pathname.split("/").filter((e) => e.length);
+        anyPathHandled = handlePath("/echo", request.url.pathname, (path) => {
+          const responseBody = path.split("/").slice(2).join("/");
+          const response = getResponse(
+            200,
+            {
+              "Content-Type": "text/plain",
+              "Content-Length": responseBody.length,
+            },
+            responseBody
+          );
 
-          if(parsed.pathname == '/') {
-            socket.write(`HTTP/1.1 200 OK${CRLF}${CRLF}`)
-          } else if (pathParts[0] == "echo") {
-            const responseBody = pathParts.slice(1).join('/');
-            const contentType = "text/plain";
-            const contentLength = responseBody.length;
+          socket.write(response);
+          socket.end();
+        });
 
-            const response = [
-              "HTTP/1.1 200 OK",
-              `Content-Type: ${contentType}`,
-              `Content-Length: ${contentLength}`,
-              ``,
-              `${responseBody}`,
-            ].join(CRLF);
+        anyPathHandled = handlePath("/user-agent", request.url.pathname, () => {
+          const response = getResponse(
+            200,
+            {
+              "Content-Type": "text/plain",
+              "Content-Length": request.headers["User-Agent"].length,
+            },
+            request.headers["User-Agent"]
+          );
 
-            socket.write(response);
-          } else socket.write(`HTTP/1.1 404 Not Found${CRLF}${CRLF}`);
-        } else socket.write(`HTTP/1.1 404 Not Found${CRLF}${CRLF}`);
+          socket.write(response);
+          socket.end();
+        });
 
+        break;
+      default:
+        socket.write(`HTTP/1.1 404 Not Found${CRLF}${CRLF}`);
         socket.end();
-      }
-    });
+        anyPathHandled = true;
+    }
+
+    if (!anyPathHandled) {
+      socket.write(`HTTP/1.1 404 Not Found${CRLF}${CRLF}`);
+      socket.end();
+    }
   });
 
   console.clear();
