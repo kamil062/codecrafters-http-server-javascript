@@ -69,6 +69,13 @@ const getResponse = (status, headers, responseBody) => {
   ].join(CRLF);
 };
 
+const sendResponse = (socket, response) => {
+  if (socket.readyState == "open") {
+    socket.write(response);
+    socket.end();
+  }
+};
+
 // Uncomment this to pass the first stage
 const server = net.createServer((socket) => {
   socket.on("close", () => {
@@ -84,8 +91,7 @@ const server = net.createServer((socket) => {
     switch (HttpMethod[request.method]) {
       case HttpMethod.GET:
         anyPathHandled = handlePath("/", request.url.pathname, () => {
-          socket.write(`HTTP/1.1 200 OK${CRLF}${CRLF}test`);
-          socket.end();
+          sendResponse(socket, `HTTP/1.1 200 OK${CRLF}${CRLF}test`);
         });
 
         anyPathHandled = handlePath("/echo", request.url.pathname, (path) => {
@@ -99,8 +105,7 @@ const server = net.createServer((socket) => {
             responseBody
           );
 
-          socket.write(response);
-          socket.end();
+          sendResponse(socket, response);
         });
 
         anyPathHandled = handlePath("/user-agent", request.url.pathname, () => {
@@ -113,20 +118,17 @@ const server = net.createServer((socket) => {
             request.headers["User-Agent"]
           );
 
-          socket.write(response);
-          socket.end();
+          sendResponse(socket, response);
         });
 
         break;
       default:
-        socket.write(`HTTP/1.1 404 Not Found${CRLF}${CRLF}`);
-        socket.end();
+        sendResponse(socket, getResponse(404, {}, ''));
         anyPathHandled = true;
     }
 
     if (!anyPathHandled) {
-      socket.write(`HTTP/1.1 404 Not Found${CRLF}${CRLF}`);
-      socket.end();
+      sendResponse(socket, getResponse(404, {}, ''));
     }
   });
 
