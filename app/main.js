@@ -1,8 +1,4 @@
-const {
-  createReadStream,
-  statSync,
-  existsSync,
-} = require("fs");
+const { createReadStream, statSync, existsSync, writeFileSync } = require("fs");
 const net = require("net");
 const { join } = require("path");
 const url = require("url");
@@ -23,11 +19,12 @@ const HttpMethod = {
 
 const StatusText = {
   200: "OK",
+  201: "Created",
   404: "Not Found",
 };
 
 const parseRequest = (data) => {
-  const [requestLine, ...lines] = data.toString().split("\r\n");
+  const [requestLine, ...lines] = data.toString().split(CRLF);
 
   const headersEnd = lines.findIndex((line) => line.length === 0);
   const [headers, body] = [
@@ -35,7 +32,7 @@ const parseRequest = (data) => {
       .slice(0, headersEnd)
       .map((header) => header.split(": "))
       .reduce((prev, curr) => ({ ...prev, [curr[0]]: curr[1] }), {}),
-    lines.slice(headersEnd + 1),
+    lines.slice(headersEnd + 1).join(CRLF),
   ];
 
   const [method, target, httpVersion] = requestLine.split(" ");
@@ -138,7 +135,7 @@ const server = net.createServer((socket) => {
             process.argv[process.argv.indexOf("--directory") + 1];
           const filePath = join(directory, filename);
 
-          if(!existsSync(filePath)) {
+          if (!existsSync(filePath)) {
             sendResponse(socket, getResponse(404, {}, ""));
             return;
           }
@@ -158,6 +155,20 @@ const server = net.createServer((socket) => {
           }
         });
 
+        break;
+      case HttpMethod.POST:
+        anyPathHandled = handlePath("/files", request.url.pathname, (path) => {
+          const filename = path.split("/").slice(2)[0];
+          const directory =
+            process.argv[process.argv.indexOf("--directory") + 1];
+          const filePath = join(directory, filename);
+
+          writeFileSync(filePath, request.body, {
+            encoding: "utf8",
+          });
+
+          sendResponse(socket, getResponse(201, {}, ""));
+        });
         break;
       default:
         sendResponse(socket, getResponse(404, {}, ""));
