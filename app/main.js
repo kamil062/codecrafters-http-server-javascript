@@ -1,4 +1,10 @@
+const {
+  createReadStream,
+  statSync,
+  existsSync,
+} = require("fs");
 const net = require("net");
+const { join } = require("path");
 const url = require("url");
 
 const CRLF = "\r\n";
@@ -61,18 +67,23 @@ const handlePath = (path, pathToTest, callback) => {
 };
 
 const getResponse = (status, headers, responseBody) => {
-  return [
+  const response = [
     `HTTP/1.1 ${status} ${StatusText[status]}`,
     ...Object.keys(headers).map((key) => `${key}: ${headers[key]}`),
     ``,
-    `${responseBody}`,
-  ].join(CRLF);
+  ];
+
+  if (responseBody !== undefined) {
+    response.push(responseBody);
+  }
+
+  return response.join(CRLF);
 };
 
-const sendResponse = (socket, response) => {
+const sendResponse = (socket, response, noEnd) => {
   if (socket.readyState == "open") {
     socket.write(response);
-    socket.end();
+    if (!noEnd) socket.end();
   }
 };
 
@@ -121,14 +132,40 @@ const server = net.createServer((socket) => {
           sendResponse(socket, response);
         });
 
+        anyPathHandled = handlePath("/files", request.url.pathname, (path) => {
+          const filename = path.split("/").slice(2)[0];
+          const directory =
+            process.argv[process.argv.indexOf("--directory") + 1];
+          const filePath = join(directory, filename);
+
+          if(!existsSync(filePath)) {
+            sendResponse(socket, getResponse(404, {}, ""));
+            return;
+          }
+
+          const response = getResponse(
+            200,
+            {
+              "Content-Type": "application/octet-stream",
+              "Content-Length": statSync(filePath).size,
+            },
+            ""
+          );
+
+          sendResponse(socket, response, true);
+          if (socket.readyState == "open") {
+            createReadStream(join(directory, filename)).pipe(socket);
+          }
+        });
+
         break;
       default:
-        sendResponse(socket, getResponse(404, {}, ''));
+        sendResponse(socket, getResponse(404, {}, ""));
         anyPathHandled = true;
     }
 
     if (!anyPathHandled) {
-      sendResponse(socket, getResponse(404, {}, ''));
+      sendResponse(socket, getResponse(404, {}, ""));
     }
   });
 
